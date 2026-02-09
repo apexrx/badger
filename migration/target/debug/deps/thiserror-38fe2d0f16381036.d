@@ -1,0 +1,14 @@
+/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/thiserror-38fe2d0f16381036.d: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/target/debug/build/thiserror-b40b84510f253ba0/out/private.rs
+
+/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/libthiserror-38fe2d0f16381036.rlib: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/target/debug/build/thiserror-b40b84510f253ba0/out/private.rs
+
+/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/libthiserror-38fe2d0f16381036.rmeta: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/target/debug/build/thiserror-b40b84510f253ba0/out/private.rs
+
+/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/target/debug/build/thiserror-b40b84510f253ba0/out/private.rs:
+
+# env-dep:OUT_DIR=/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/build/thiserror-b40b84510f253ba0/out

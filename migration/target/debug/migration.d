@@ -1,0 +1,1 @@
+/run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/target/debug/migration: /run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/src/lib.rs /run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/src/m20220101_000001_create_table.rs /run/media/apex/E/01\ Projects/08\ Rust-based/badger/migration/src/main.rs
