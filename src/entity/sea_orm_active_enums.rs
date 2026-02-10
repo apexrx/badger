@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, serde::Serialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "status_enum")]
 pub enum StatusEnum {
     #[sea_orm(string_value = "Pending")]

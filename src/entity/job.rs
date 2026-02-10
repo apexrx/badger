@@ -2,8 +2,9 @@
 
 use super::sea_orm_active_enums::StatusEnum;
 use sea_orm::entity::prelude::*;
+use serde_json::Value as JsonValue;
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, serde::Serialize)]
 #[sea_orm(table_name = "job")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
