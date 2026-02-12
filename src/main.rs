@@ -1,11 +1,13 @@
 use crate::entity::job;
 use axum::extract::State;
 use axum::{Router, routing::post};
-use chrono::Utc;
+use chrono::{Duration, NaiveDateTime, Utc};
 use dotenvy::dotenv;
+use reqwest::{Method, RequestBuilder};
 use sea_orm::entity::prelude::*;
-use sea_orm::{ActiveModelTrait, Set};
+use sea_orm::{ActiveModelTrait, Condition, IntoActiveModel, QueryFilter, QueryOrder, Set};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 
 mod entity;
 
@@ -52,7 +54,7 @@ async fn create_job(
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    Ok(result.id.to_string())
+    Ok(result.id.to_string() + "\n")
 }
 
 async fn get_job(
@@ -73,6 +75,140 @@ async fn get_job(
     }
 }
 
+async fn worker_task(state: AppState) {
+    loop {
+        let max_attempts = 8;
+        let now = chrono::Utc::now();
+
+        let job = job::Entity::find()
+            .filter(
+                job::Column::Status.eq(crate::entity::sea_orm_active_enums::StatusEnum::Pending),
+            )
+            .filter(
+                Condition::any()
+                    .add(job::Column::NextRunAt.lte(now))
+                    .add(job::Column::NextRunAt.is_null()),
+            )
+            .order_by_asc(job::Column::CreatedAt)
+            .one(&state.db)
+            .await;
+
+        // Reusable client for HTTP requests
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap();
+
+        match job {
+            Ok(Some(job)) => {
+                println!("Processing job: {}", job.id);
+
+                let next_attempts = job.attempts + 1;
+                let body = job.body.clone();
+                let headers = job.headers.clone();
+                let url = job.url.clone();
+                let method = job.method.clone();
+
+                let mut active_job = job.into_active_model();
+                active_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Running);
+                active_job.attempts = Set(next_attempts);
+                active_job.updated_at = Set(Utc::now().naive_utc());
+
+                let updated_job = match active_job.update(&state.db).await {
+                    Ok(model) => model,
+                    Err(e) => {
+                        eprintln!("Error while updating job: {}", e);
+                        continue;
+                    }
+                };
+
+                let method = match Method::from_bytes(method.as_bytes()) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        eprintln!("Invalid HTTP method");
+                        continue;
+                    }
+                };
+
+                let mut request = client.request(method, &url);
+
+                if let Some(map) = headers.as_object() {
+                    for (key, value) in map {
+                        if let Some(val) = value.as_str() {
+                            request = request.header(key, val);
+                        }
+                    }
+                }
+
+                if !body.is_null() {
+                    request = request.json(&body);
+                }
+
+                let (status, body) = match request.send().await {
+                    Ok(response) => {
+                        let status = response.status();
+
+                        let body = match response.text().await {
+                            Ok(t) => t,
+                            Err(e) => {
+                                eprintln!("Failed reading body: {}", e);
+                                String::new()
+                            }
+                        };
+
+                        (status, body)
+                    }
+
+                    Err(e) => {
+                        eprintln!("HTTP request failed: {}", e);
+                        (reqwest::StatusCode::INTERNAL_SERVER_ERROR, String::new())
+                    }
+                };
+
+                if status.is_success() {
+                    let mut completed_job = updated_job.into_active_model();
+                    completed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Success);
+                    completed_job.updated_at = Set(Utc::now().naive_utc());
+
+                    let json: JsonValue = serde_json::from_str(&body).unwrap_or(JsonValue::Null);
+                    completed_job.body = Set(json);
+
+                    if let Err(e) = completed_job.update(&state.db).await {
+                        eprintln!("Error while processing job: {}", e);
+                    }
+                } else {
+                    let attempts = updated_job.attempts;
+
+                    let mut failed_job = updated_job.into_active_model();
+
+                    if attempts >= max_attempts {
+                        failed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                        failed_job.updated_at = Set(Utc::now().naive_utc());
+                    } else {
+                        failed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+                        failed_job.updated_at = Set(Utc::now().naive_utc());
+
+                        let next_time = (Utc::now() + Duration::seconds(2)).naive_utc();
+                        failed_job.next_run_at = Set(next_time);
+                    }
+
+                    if let Err(e) = failed_job.update(&state.db).await {
+                        eprintln!("Error while processing job: {}", e);
+                    }
+                }
+            }
+            Ok(None) => {
+                println!("No pending jobs");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+            Err(e) => {
+                eprintln!("Error processing job: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenv().ok();
@@ -85,6 +221,12 @@ async fn main() {
 
     // Axum router setup
     let state = AppState { db };
+
+    // worker
+    let worker_state = state.clone();
+    let worker = tokio::spawn(async move {
+        worker_task(worker_state).await;
+    });
 
     let app = Router::new()
         .route("/jobs", post(create_job))
