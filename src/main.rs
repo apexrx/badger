@@ -178,6 +178,11 @@ async fn worker_task(state: AppState) {
                     }
                 } else {
                     let attempts = updated_job.attempts;
+                    let exp = attempts.max(0) as u32;
+                    let mut backoff: i64 = 2i64.pow(exp);
+                    // adding jitter/randomness to prevent thundering herd problem
+                    let jitter: i64 = rand::rng().gen_range(-500..=500);
+                    backoff += jitter;
 
                     let mut failed_job = updated_job.into_active_model();
 
@@ -188,7 +193,7 @@ async fn worker_task(state: AppState) {
                         failed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Pending);
                         failed_job.updated_at = Set(Utc::now().naive_utc());
 
-                        let next_time = (Utc::now() + Duration::seconds(2)).naive_utc();
+                        let next_time = (Utc::now() + Duration::seconds(backoff)).naive_utc();
                         failed_job.next_run_at = Set(next_time);
                     }
 
