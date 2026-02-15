@@ -1,8 +1,0 @@
-/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/shlex-3b90976fe851454e.d: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/lib.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/bytes.rs
-
-/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/libshlex-3b90976fe851454e.rlib: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/lib.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/bytes.rs
-
-/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/libshlex-3b90976fe851454e.rmeta: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/lib.rs /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/bytes.rs
-
-/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/lib.rs:
-/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-1.3.0/src/bytes.rs:

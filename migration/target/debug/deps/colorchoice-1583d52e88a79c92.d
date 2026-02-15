@@ -1,7 +1,0 @@
-/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/colorchoice-1583d52e88a79c92.d: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/colorchoice-1.0.4/src/lib.rs
-
-/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/libcolorchoice-1583d52e88a79c92.rlib: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/colorchoice-1.0.4/src/lib.rs
-
-/run/media/apex/E/01 Projects/08 Rust-based/badger/migration/target/debug/deps/libcolorchoice-1583d52e88a79c92.rmeta: /home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/colorchoice-1.0.4/src/lib.rs
-
-/home/apex/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/colorchoice-1.0.4/src/lib.rs:
