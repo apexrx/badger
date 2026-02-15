@@ -19,6 +19,7 @@ pub struct Model {
     pub next_run_at: DateTime,
     pub created_at: DateTime,
     pub updated_at: DateTime,
+    pub check_in: Option<DateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
