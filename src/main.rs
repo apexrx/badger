@@ -6,7 +6,10 @@ use dotenvy::dotenv;
 use rand::{Rng, RngExt};
 use reqwest::{Method, RequestBuilder};
 use sea_orm::entity::prelude::*;
-use sea_orm::{ActiveModelTrait, Condition, IntoActiveModel, QueryFilter, QueryOrder, Set};
+use sea_orm::sea_query::Expr;
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, Condition, IntoActiveModel, QueryFilter, QueryOrder, Set,
+};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
@@ -105,7 +108,7 @@ async fn worker_task(state: AppState) {
                 println!("Processing job: {}", job.id);
 
                 let next_attempts = job.attempts + 1;
-                let body = job.body.clone();
+                let body: serde_json::Value = job.body.clone();
                 let headers = job.headers.clone();
                 let url = job.url.clone();
                 let method = job.method.clone();
@@ -215,6 +218,46 @@ async fn worker_task(state: AppState) {
     }
 }
 
+async fn monitor_task(state: AppState) {
+    loop {
+        let cutoff = Utc::now().naive_utc() - Duration::seconds(30);
+
+        let job = job::Entity::find()
+            .filter(
+                job::Column::Status.eq(crate::entity::sea_orm_active_enums::StatusEnum::Running),
+            )
+            .filter(
+                Condition::any().add(job::Column::CheckIn.lte(cutoff)).add(
+                    Condition::all()
+                        .add(job::Column::CheckIn.is_null())
+                        .add(job::Column::UpdatedAt.lte(cutoff)),
+                ),
+            )
+            .order_by_asc(job::Column::UpdatedAt)
+            .one(&state.db)
+            .await;
+
+        match job {
+            Ok(Some(job)) => {
+                let mut active_job = job.into_active_model();
+                active_job.check_in = Set(Some(Utc::now().naive_utc()));
+                active_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+
+                if let Err(e) = active_job.update(&state.db).await {
+                    eprintln!("Error while processing job: {}", e);
+                }
+            }
+            Ok(None) => {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+            Err(e) => {
+                eprintln!("Error fetching job: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenv().ok();
@@ -232,6 +275,11 @@ async fn main() {
     let worker_state = state.clone();
     let worker = tokio::spawn(async move {
         worker_task(worker_state).await;
+    });
+
+    let monitor_state = state.clone();
+    let monitor = tokio::spawn(async move {
+        monitor_task(monitor_state).await;
     });
 
     let app = Router::new()
