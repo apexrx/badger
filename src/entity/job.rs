@@ -8,6 +8,7 @@ use serde_json::Value as JsonValue;
 #[sea_orm(table_name = "job")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
+    pub unique_id: String,
     pub id: Uuid,
     pub url: String,
     pub method: String,

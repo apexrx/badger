@@ -176,17 +176,19 @@ dependencies = [
 
 [[package]]
 name = "badger"
-version = "0.4.0"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
  "dotenvy",
+ "hex",
  "rand 0.10.0",
  "reqwest",
  "sea-orm",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "uuid",
 ]

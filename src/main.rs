@@ -11,6 +11,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, Condition, IntoActiveModel, QueryFilter, QueryOrder, Set,
 };
 use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 mod entity;
@@ -28,23 +29,65 @@ struct JobRequest {
     body: Option<JsonValue>,
 }
 
+fn create_fingerprint(
+    method: String,
+    url: String,
+    headers: Option<JsonValue>,
+    body: Option<JsonValue>,
+) -> String {
+    // if headers are present, extract headers - authorization, content-type, idempotency-key(if present)
+    // convert keys to lowercase
+    // then sort the headers by key and store them in a vec
+    let mut headers_vec = Vec::new();
+    if let Some(headers) = headers {
+        let headers = headers.as_object().unwrap();
+        for (key, value) in headers {
+            headers_vec.push((key.to_lowercase(), value.clone()));
+        }
+        headers_vec.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+
+    // create a string representation of the header, ex: key1:val1, key2:val2
+    let headers_str = headers_vec
+        .iter()
+        .map(|(key, value)| format!("{}:{}", key, value))
+        .collect::<Vec<String>>()
+        .join(", ");
+
+    // if body is present convert to string
+    let body_str = body.map(|body| body.to_string()).unwrap_or_default();
+
+    // create a string of method, url, headers, body in the format: METHOD + | + URL + | + BODY + | + HEADER_STRING
+    let fingerprint = format!("{}|{}|{}|{}", method, url, body_str, headers_str);
+
+    // hashing
+    let mut hasher = Sha256::new();
+    hasher.update(fingerprint);
+    let hash = hasher.finalize();
+    let hash_str = hex::encode(hash);
+
+    hash_str
+}
+
 async fn create_job(
     State(state): State<AppState>,
     axum::Json(payload): axum::Json<JobRequest>,
 ) -> Result<String, axum::http::StatusCode> {
     let now = Utc::now().naive_utc();
 
+    let url = payload.url.clone();
+    let method = payload.method.clone();
+    let headers: Option<JsonValue> = payload.headers.clone();
+    let body: Option<JsonValue> = payload.body.clone();
+
+    let unique_id = create_fingerprint(method.clone(), url.clone(), headers.clone(), body.clone());
+
     let new_job = job::ActiveModel {
-        url: Set(payload.url),
-        method: Set(payload.method),
-        headers: Set(payload
-            .headers
-            .map(Into::into)
-            .unwrap_or(serde_json::json!({}))),
-        body: Set(payload
-            .body
-            .map(Into::into)
-            .unwrap_or(serde_json::json!(null))),
+        unique_id: Set(unique_id.clone()),
+        url: Set(url),
+        method: Set(method),
+        headers: Set(headers.unwrap_or(serde_json::json!({}))),
+        body: Set(body.unwrap_or(serde_json::json!(null))),
         retries: Set(0),
         attempts: Set(0),
         next_run_at: Set(now),
@@ -53,12 +96,38 @@ async fn create_job(
         ..Default::default()
     };
 
-    let result = new_job.insert(&state.db).await.map_err(|e| {
-        println!("Database insertion error: {}", e);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    match new_job.insert(&state.db).await {
+        Ok(model) => {
+            // successful insert
+            Ok(model.id.to_string() + "\n")
+        }
 
-    Ok(result.id.to_string() + "\n")
+        Err(DbErr::Query(sea_orm::RuntimeErr::SqlxError(e)))
+            if e.as_database_error()
+                .map(|db_err| db_err.code() == Some("23505".into()))
+                .unwrap_or(false) =>
+        {
+            // unique_id conflict → fetch existing job
+            let existing_job = job::Entity::find()
+                .filter(job::Column::UniqueId.eq(unique_id))
+                .one(&state.db)
+                .await
+                .map_err(|e| {
+                    println!("Database error: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+
+            match existing_job {
+                Some(job) => Ok(job.id.to_string() + "\n"),
+                None => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+            }
+        }
+
+        Err(e) => {
+            println!("Database insertion error: {}", e);
+            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 async fn get_job(
@@ -81,7 +150,7 @@ async fn get_job(
 
 async fn worker_task(state: AppState) {
     loop {
-        let max_attempts = 8;
+        let max_attempts = 10;
         let now = chrono::Utc::now();
 
         let job = job::Entity::find()
