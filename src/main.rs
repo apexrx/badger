@@ -6,9 +6,10 @@ use dotenvy::dotenv;
 use rand::{Rng, RngExt};
 use reqwest::{Method, RequestBuilder};
 use sea_orm::entity::prelude::*;
-use sea_orm::sea_query::Expr;
+use sea_orm::sea_query::{Expr, LockBehavior, LockType};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, Condition, IntoActiveModel, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ActiveValue, Condition, IntoActiveModel, QueryFilter, QueryOrder,
+    QuerySelect, Set, TransactionTrait,
 };
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
@@ -149,141 +150,139 @@ async fn get_job(
 }
 
 async fn worker_task(state: AppState) {
+    let max_attempts = 10;
+
+    // reuse HTTP client
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+
     loop {
-        let max_attempts = 10;
-        let now = chrono::Utc::now();
+        let now = Utc::now().naive_utc();
 
-        let job = job::Entity::find()
-            .filter(
-                job::Column::Status.eq(crate::entity::sea_orm_active_enums::StatusEnum::Pending),
-            )
-            .filter(
-                Condition::any()
-                    .add(job::Column::NextRunAt.lte(now))
-                    .add(job::Column::NextRunAt.is_null()),
-            )
-            .order_by_asc(job::Column::CreatedAt)
-            .one(&state.db)
-            .await;
+        let job_opt = (&state.db)
+            .transaction::<_, Option<job::Model>, DbErr>(|txn| {
+                Box::pin(async move {
+                    let job = job::Entity::find()
+                        .filter(
+                            job::Column::Status
+                                .eq(entity::sea_orm_active_enums::StatusEnum::Pending),
+                        )
+                        .filter(
+                            Condition::any()
+                                .add(job::Column::NextRunAt.lte(now))
+                                .add(job::Column::NextRunAt.is_null()),
+                        )
+                        .order_by_asc(job::Column::CreatedAt)
+                        .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
+                        .one(txn)
+                        .await?;
 
-        // Reusable client for HTTP requests
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap();
+                    if let Some(job) = job {
+                        let mut active = job.clone().into_active_model();
 
-        match job {
-            Ok(Some(job)) => {
-                println!("Processing job: {}", job.id);
+                        active.status = Set(entity::sea_orm_active_enums::StatusEnum::Running);
+                        active.attempts = Set(job.attempts + 1);
+                        active.updated_at = Set(now);
+                        active.check_in = Set(Some(now));
 
-                let next_attempts = job.attempts + 1;
-                let body: serde_json::Value = job.body.clone();
-                let headers = job.headers.clone();
-                let url = job.url.clone();
-                let method = job.method.clone();
-
-                let mut active_job = job.into_active_model();
-                active_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Running);
-                active_job.attempts = Set(next_attempts);
-                active_job.updated_at = Set(Utc::now().naive_utc());
-
-                let updated_job = match active_job.update(&state.db).await {
-                    Ok(model) => model,
-                    Err(e) => {
-                        eprintln!("Error while updating job: {}", e);
-                        continue;
-                    }
-                };
-
-                let method = match Method::from_bytes(method.as_bytes()) {
-                    Ok(m) => m,
-                    Err(_) => {
-                        eprintln!("Invalid HTTP method");
-                        continue;
-                    }
-                };
-
-                let mut request = client.request(method, &url);
-
-                if let Some(map) = headers.as_object() {
-                    for (key, value) in map {
-                        if let Some(val) = value.as_str() {
-                            request = request.header(key, val);
-                        }
-                    }
-                }
-
-                if !body.is_null() {
-                    request = request.json(&body);
-                }
-
-                let (status, body) = match request.send().await {
-                    Ok(response) => {
-                        let status = response.status();
-
-                        let body = match response.text().await {
-                            Ok(t) => t,
-                            Err(e) => {
-                                eprintln!("Failed reading body: {}", e);
-                                String::new()
-                            }
-                        };
-
-                        (status, body)
-                    }
-
-                    Err(e) => {
-                        eprintln!("HTTP request failed: {}", e);
-                        (reqwest::StatusCode::INTERNAL_SERVER_ERROR, String::new())
-                    }
-                };
-
-                if status.is_success() {
-                    let mut completed_job = updated_job.into_active_model();
-                    completed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Success);
-                    completed_job.updated_at = Set(Utc::now().naive_utc());
-
-                    let json: JsonValue = serde_json::from_str(&body).unwrap_or(JsonValue::Null);
-                    completed_job.body = Set(json);
-
-                    if let Err(e) = completed_job.update(&state.db).await {
-                        eprintln!("Error while processing job: {}", e);
-                    }
-                } else {
-                    let attempts = updated_job.attempts;
-                    let exp = attempts.max(0) as u32;
-                    let mut backoff: i64 = 1000 * 2i64.pow(exp);
-                    // adding jitter/randomness to prevent thundering herd problem
-                    let jitter: i64 = rand::rng().random_range(-500..=500);
-                    backoff = (backoff + jitter).max(0);
-
-                    let mut failed_job = updated_job.into_active_model();
-
-                    if attempts >= max_attempts {
-                        failed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
-                        failed_job.updated_at = Set(Utc::now().naive_utc());
+                        let updated = active.update(txn).await?;
+                        Ok(Some(updated))
                     } else {
-                        failed_job.status = Set(entity::sea_orm_active_enums::StatusEnum::Pending);
-                        failed_job.updated_at = Set(Utc::now().naive_utc());
-
-                        let next_time = (Utc::now() + Duration::milliseconds(backoff)).naive_utc();
-                        failed_job.next_run_at = Set(next_time);
+                        Ok(None)
                     }
+                })
+            })
+            .await
+            .unwrap_or(None);
 
-                    if let Err(e) = failed_job.update(&state.db).await {
-                        eprintln!("Error while processing job: {}", e);
-                    }
-                }
-            }
-            Ok(None) => {
+        let job = match job_opt {
+            Some(j) => j,
+            None => {
                 println!("No pending jobs");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
             }
-            Err(e) => {
-                eprintln!("Error processing job: {}", e);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        };
+
+        println!("Processing job: {}", job.id);
+
+        let method = match reqwest::Method::from_bytes(job.method.as_bytes()) {
+            Ok(m) => m,
+            Err(_) => {
+                eprintln!("Invalid HTTP method for job {}", job.id);
+                continue;
+            }
+        };
+
+        let mut request = client.request(method, &job.url);
+
+        if let Some(map) = job.headers.as_object() {
+            for (k, v) in map {
+                if let Some(val) = v.as_str() {
+                    request = request.header(k, val);
+                }
             }
         }
+
+        if !job.body.is_null() {
+            request = request.json(&job.body);
+        }
+
+        let (status, response_body) = match request.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                (status, text)
+            }
+            Err(e) => {
+                eprintln!("HTTP error for job {}: {}", job.id, e);
+                (reqwest::StatusCode::INTERNAL_SERVER_ERROR, String::new())
+            }
+        };
+
+        let _ = (&state.db)
+            .transaction::<_, (), DbErr>(|txn| {
+                let job = job.clone();
+                Box::pin(async move {
+                    let mut active = job.clone().into_active_model();
+
+                    if status.is_success() {
+                        active.status = Set(entity::sea_orm_active_enums::StatusEnum::Success);
+                        active.updated_at = Set(Utc::now().naive_utc());
+
+                        let json: serde_json::Value =
+                            serde_json::from_str(&response_body).unwrap_or(JsonValue::Null);
+
+                        active.body = Set(json);
+                    } else {
+                        let attempts = job.attempts + 1;
+
+                        if attempts >= max_attempts {
+                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                        } else {
+                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+
+                            let exp = attempts.max(0) as u32;
+                            let mut backoff = 1000 * 2i64.pow(exp);
+                            let jitter: i64 = rand::rng().random_range(-500..=500);
+                            backoff = (backoff + jitter).max(0);
+
+                            let next_time =
+                                (Utc::now() + Duration::milliseconds(backoff)).naive_utc();
+
+                            active.next_run_at = Set(next_time);
+                        }
+
+                        active.updated_at = Set(Utc::now().naive_utc());
+                    }
+
+                    active.update(txn).await?;
+                    Ok(())
+                })
+            })
+            .await;
     }
 }
 
