@@ -1,8 +1,16 @@
 use crate::entity::job;
 use axum::extract::State;
+use axum::routing::get;
 use axum::{Router, routing::post};
 use chrono::{Duration, NaiveDateTime, Utc};
 use dotenvy::dotenv;
+use governor::clock::Clock;
+use governor::clock::DefaultClock;
+use governor::clock::QuantaInstant;
+use governor::state::keyed::DefaultKeyedStateStore;
+use governor::state::{InMemoryState, NotKeyed};
+use governor::{DefaultKeyedRateLimiter, NotUntil, Quota, RateLimiter};
+use metrics_exporter_prometheus::PrometheusBuilder;
 use rand::{Rng, RngExt};
 use reqwest::{Method, RequestBuilder};
 use sea_orm::entity::prelude::*;
@@ -14,12 +22,20 @@ use sea_orm::{
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::num::NonZeroU32;
+use std::sync::Arc;
+use std::time::Instant;
+use tracing::{error, info, info_span};
+use url::Url;
 
 mod entity;
+
+type JobRateLimiter = DefaultKeyedRateLimiter<String>;
 
 #[derive(Debug, Clone)]
 struct AppState {
     db: sea_orm::DatabaseConnection,
+    limiter: std::sync::Arc<JobRateLimiter>,
 }
 
 #[derive(serde::Deserialize)]
@@ -200,21 +216,83 @@ async fn worker_task(state: AppState) {
         let job = match job_opt {
             Some(j) => j,
             None => {
-                println!("No pending jobs");
+                tracing::debug!("No pending jobs");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
         };
 
-        println!("Processing job: {}", job.id);
+        let span = info_span!("Processing job", job_id = %job.id);
+        let _enter = span.enter();
+        info!("Job picked up");
 
         let method = match reqwest::Method::from_bytes(job.method.as_bytes()) {
             Ok(m) => m,
             Err(_) => {
-                eprintln!("Invalid HTTP method for job {}", job.id);
+                error!("Invalid HTTP method for job {}", job.id);
                 continue;
             }
         };
+
+        let url_str: &str = &job.url;
+        let url = match Url::parse(url_str) {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("Failed to parse URL: {}", e);
+                continue;
+            }
+        };
+
+        let limiter = state.limiter.clone();
+        let mut go_ahead = true;
+
+        let _ = (&state.db)
+            .transaction::<_, (), DbErr>(|txn| {
+                let job = job.clone();
+                Box::pin(async move {
+                    let mut active = job.clone().into_active_model();
+
+                    if let Some(host) = url.host_str() {
+                        match limiter.check_key(&host.to_string()) {
+                            Ok(_) => {}
+                            Err(nbd) => {
+                                let now = limiter.clock().now();
+                                let wait_dur = nbd.wait_time_from(now);
+                                let next_available_utc =
+                                    Utc::now() + chrono::Duration::from_std(wait_dur).unwrap();
+
+                                active.status =
+                                    Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+                                active.updated_at = Set(Utc::now().naive_utc());
+                                active.next_run_at = Set(next_available_utc.naive_utc());
+
+                                let attempts = job.attempts - 1;
+                                active.attempts = Set(attempts.max(0));
+
+                                println!("No tokens, next available at {}", next_available_utc);
+                                go_ahead = false;
+                            }
+                        }
+                    } else {
+                        println!("Job {} has no valid host in URL {}", job.id, url);
+                        active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                        active.updated_at = Set(Utc::now().naive_utc());
+
+                        let attempts = job.attempts - 1;
+                        active.attempts = Set(attempts.max(0));
+
+                        go_ahead = false;
+                    }
+
+                    active.update(txn).await?;
+                    Ok(())
+                })
+            })
+            .await;
+
+        if !go_ahead {
+            continue;
+        }
 
         let mut request = client.request(method, &job.url);
 
@@ -237,7 +315,7 @@ async fn worker_task(state: AppState) {
                 (status, text)
             }
             Err(e) => {
-                eprintln!("HTTP error for job {}: {}", job.id, e);
+                error!("HTTP error for job {}: {}", job.id, e);
                 (reqwest::StatusCode::INTERNAL_SERVER_ERROR, String::new())
             }
         };
@@ -256,8 +334,12 @@ async fn worker_task(state: AppState) {
                             serde_json::from_str(&response_body).unwrap_or(JsonValue::Null);
 
                         active.body = Set(json);
+
+                        metrics::counter!("job_execution_result", "status" => "success")
+                            .increment(1);
                     } else {
                         let attempts = job.attempts + 1;
+                        active.attempts = Set(attempts);
 
                         if attempts >= max_attempts {
                             active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
@@ -276,6 +358,9 @@ async fn worker_task(state: AppState) {
                         }
 
                         active.updated_at = Set(Utc::now().naive_utc());
+
+                        metrics::counter!("job_execution_result", "status" => "failure")
+                            .increment(1);
                     }
 
                     active.update(txn).await?;
@@ -328,7 +413,14 @@ async fn monitor_task(state: AppState) {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     dotenv().ok();
+
+    // Prometheus
+    let builder = PrometheusBuilder::new();
+    let handle = builder
+        .install_recorder()
+        .expect("failed to install recorder");
 
     // Connect to database URL
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -336,8 +428,15 @@ async fn main() {
 
     println!("Database connection established");
 
+    let quota = Quota::per_second(NonZeroU32::new(5).unwrap());
+    let limiter = Arc::new(RateLimiter::new(
+        quota,
+        DefaultKeyedStateStore::<String>::new(),
+        DefaultClock::default(),
+    ));
+
     // Axum router setup
-    let state = AppState { db };
+    let state = AppState { db, limiter };
 
     // worker
     let worker_state = state.clone();
@@ -353,6 +452,7 @@ async fn main() {
     let app = Router::new()
         .route("/jobs", post(create_job))
         .route("/jobs/{id}", axum::routing::get(get_job))
+        .route("/metrics", get(move || std::future::ready(handle.render())))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
