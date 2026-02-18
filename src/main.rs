@@ -296,6 +296,7 @@ async fn worker_task(state: AppState) {
 
                         let attempts = job.attempts - 1;
                         active.attempts = Set(attempts.max(0));
+                        active.retries = Set((attempts - 1).max(0));
 
                         go_ahead = false;
                     }
@@ -356,6 +357,7 @@ async fn worker_task(state: AppState) {
                     } else {
                         let attempts = job.attempts + 1;
                         active.attempts = Set(attempts);
+                        active.retries = Set(attempts - 1);
 
                         if attempts >= max_attempts {
                             active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
