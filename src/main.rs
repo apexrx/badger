@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{error, info, info_span};
+use tracing::{Instrument, error, info, info_span};
 use url::Url;
 
 mod entity;
@@ -184,11 +184,11 @@ async fn get_job(
 async fn worker_task(state: AppState) {
     let max_attempts = 10;
 
-    // reuse HTTP client
+    // Built once, outside the loop
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .unwrap();
+        .expect("Failed to build HTTP client");
 
     loop {
         let now = Utc::now().naive_utc();
@@ -233,159 +233,186 @@ async fn worker_task(state: AppState) {
             Some(j) => j,
             None => {
                 tracing::debug!("No pending jobs");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                // Jitter prevents thundering herd when multiple workers are running
+                let jitter = rand::rng().random_range(0..=1000);
+                tokio::time::sleep(std::time::Duration::from_millis(5000 + jitter)).await;
                 continue;
             }
         };
 
-        let span = info_span!("Processing job", job_id = %job.id);
-        let _enter = span.enter();
-        info!("Job picked up");
+        async {
+            info!("Job picked up");
 
-        let method = match reqwest::Method::from_bytes(job.method.as_bytes()) {
-            Ok(m) => m,
-            Err(_) => {
-                error!("Invalid HTTP method for job {}", job.id);
-                continue;
-            }
-        };
-
-        let url_str: &str = &job.url;
-        let url = match Url::parse(url_str) {
-            Ok(u) => u,
-            Err(e) => {
-                eprintln!("Failed to parse URL: {}", e);
-                continue;
-            }
-        };
-
-        let limiter = state.limiter.clone();
-        let mut go_ahead = true;
-
-        let _ = (&state.db)
-            .transaction::<_, (), DbErr>(|txn| {
-                let job = job.clone();
-                Box::pin(async move {
+            let method = match reqwest::Method::from_bytes(job.method.as_bytes()) {
+                Ok(m) => m,
+                Err(_) => {
+                    tracing::error!("Invalid HTTP method for job {}", job.id);
+                    // Mark as Failure — otherwise the job is stuck in Running forever
                     let mut active = job.clone().into_active_model();
-
-                    if let Some(host) = url.host_str() {
-                        match limiter.check_key(&host.to_string()) {
-                            Ok(_) => {}
-                            Err(nbd) => {
-                                let now = limiter.clock().now();
-                                let wait_dur = nbd.wait_time_from(now);
-                                let next_available_utc =
-                                    Utc::now() + chrono::Duration::from_std(wait_dur).unwrap();
-
-                                active.status =
-                                    Set(entity::sea_orm_active_enums::StatusEnum::Pending);
-                                active.updated_at = Set(Utc::now().naive_utc());
-                                active.next_run_at = Set(next_available_utc.naive_utc());
-
-                                let attempts = job.attempts - 1;
-                                active.attempts = Set(attempts.max(0));
-
-                                println!("No tokens, next available at {}", next_available_utc);
-                                go_ahead = false;
-                            }
-                        }
-                    } else {
-                        println!("Job {} has no valid host in URL {}", job.id, url);
-                        active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
-                        active.updated_at = Set(Utc::now().naive_utc());
-
-                        let attempts = job.attempts - 1;
-                        active.attempts = Set(attempts.max(0));
-                        active.retries = Set((attempts - 1).max(0));
-
-                        go_ahead = false;
+                    active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                    active.updated_at = Set(Utc::now().naive_utc());
+                    if let Err(e) = active.update(&state.db as &DatabaseConnection).await {
+                        tracing::error!("Failed to mark job {} as failed: {}", job.id, e);
                     }
+                    return;
+                }
+            };
 
-                    active.update(txn).await?;
-                    Ok(())
+            let url = match Url::parse(&job.url) {
+                Ok(u) => u,
+                Err(e) => {
+                    tracing::error!("Failed to parse URL for job {}: {}", job.id, e);
+                    // Mark as Failure — otherwise the job is stuck in Running forever
+                    let mut active = job.clone().into_active_model();
+                    active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                    active.updated_at = Set(Utc::now().naive_utc());
+                    if let Err(e) = active.update(&state.db as &DatabaseConnection).await {
+                        tracing::error!("Failed to mark job {} as failed: {}", job.id, e);
+                    }
+                    return;
+                }
+            };
+
+            let limiter = state.limiter.clone();
+
+            let go_ahead = (&state.db)
+                .transaction::<_, bool, DbErr>(|txn| {
+                    let job = job.clone();
+                    let url = url.clone();
+                    Box::pin(async move {
+                        let mut active = job.clone().into_active_model();
+
+                        if let Some(host) = url.host_str() {
+                            match limiter.check_key(&host.to_string()) {
+                                Ok(_) => {
+                                    // Rate limit not hit — proceed
+                                    return Ok(true);
+                                }
+                                Err(nbd) => {
+                                    let now = limiter.clock().now();
+                                    let wait_dur = nbd.wait_time_from(now);
+                                    let next_available_utc =
+                                        Utc::now() + chrono::Duration::from_std(wait_dur).unwrap();
+
+                                    // Roll back the attempt/retry increment from pick-up
+                                    let attempts = (job.attempts - 1).max(0);
+                                    active.status =
+                                        Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+                                    active.updated_at = Set(Utc::now().naive_utc());
+                                    active.next_run_at = Set(next_available_utc.naive_utc());
+                                    active.attempts = Set(attempts);
+                                    active.retries = Set((attempts - 1).max(0));
+
+                                    tracing::warn!(
+                                        "Rate limited for host {}, next available at {}",
+                                        host,
+                                        next_available_utc
+                                    );
+                                }
+                            }
+                        } else {
+                            tracing::error!("Job {} has no valid host in URL {}", job.id, url);
+                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                            active.updated_at = Set(Utc::now().naive_utc());
+                            // Roll back attempt increment — this was a bad job, not a real attempt
+                            let attempts = (job.attempts - 1).max(0);
+                            active.attempts = Set(attempts);
+                            active.retries = Set((attempts - 1).max(0));
+                        }
+
+                        active.update(txn).await?;
+                        Ok(false)
+                    })
                 })
-            })
-            .await;
+                .await
+                .unwrap_or(false);
 
-        if !go_ahead {
-            continue;
-        }
+            if !go_ahead {
+                return;
+            }
 
-        let mut request = client.request(method, &job.url);
+            let mut request = client.request(method, &job.url);
 
-        if let Some(map) = job.headers.as_object() {
-            for (k, v) in map {
-                if let Some(val) = v.as_str() {
-                    request = request.header(k, val);
+            if let Some(map) = job.headers.as_object() {
+                for (k, v) in map {
+                    if let Some(val) = v.as_str() {
+                        request = request.header(k, val);
+                    }
                 }
             }
-        }
 
-        if !job.body.is_null() {
-            request = request.json(&job.body);
-        }
-
-        let (status, response_body) = match request.send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                (status, text)
+            if !job.body.is_null() {
+                request = request.json(&job.body);
             }
-            Err(e) => {
-                error!("HTTP error for job {}: {}", job.id, e);
-                (reqwest::StatusCode::INTERNAL_SERVER_ERROR, String::new())
-            }
-        };
 
-        let _ = (&state.db)
-            .transaction::<_, (), DbErr>(|txn| {
-                let job = job.clone();
-                Box::pin(async move {
-                    let mut active = job.clone().into_active_model();
+            let (status, response_body) = match request.send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    (status, text)
+                }
+                Err(e) => {
+                    tracing::error!("HTTP error for job {}: {}", job.id, e);
+                    (reqwest::StatusCode::INTERNAL_SERVER_ERROR, String::new())
+                }
+            };
 
-                    if status.is_success() {
-                        active.status = Set(entity::sea_orm_active_enums::StatusEnum::Success);
-                        active.updated_at = Set(Utc::now().naive_utc());
+            if let Err(e) = (&state.db)
+                .transaction::<_, (), DbErr>(|txn| {
+                    let job = job.clone();
+                    let response_body = response_body.clone();
+                    Box::pin(async move {
+                        let mut active = job.clone().into_active_model();
 
-                        let json: serde_json::Value =
-                            serde_json::from_str(&response_body).unwrap_or(JsonValue::Null);
+                        if status.is_success() {
+                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Success);
+                            active.updated_at = Set(Utc::now().naive_utc());
+                            active.retries = Set((job.attempts - 1).max(0));
 
-                        active.body = Set(json);
+                            let json: serde_json::Value =
+                                serde_json::from_str(&response_body).unwrap_or(JsonValue::Null);
+                            active.body = Set(json);
 
-                        metrics::counter!("job_execution_result", "status" => "success")
-                            .increment(1);
-                    } else {
-                        let attempts = job.attempts + 1;
-                        active.attempts = Set(attempts);
-                        active.retries = Set(attempts - 1);
-
-                        if attempts >= max_attempts {
-                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                            metrics::counter!("job_execution_result", "status" => "success")
+                                .increment(1);
                         } else {
-                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+                            let attempts = job.attempts;
+                            active.retries = Set((attempts - 1).max(0));
 
-                            let exp = attempts.max(0) as u32;
-                            let mut backoff = 1000 * 2i64.pow(exp);
-                            let jitter: i64 = rand::rng().random_range(-500..=500);
-                            backoff = (backoff + jitter).max(0);
+                            if attempts >= max_attempts {
+                                active.status =
+                                    Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                            } else {
+                                active.status =
+                                    Set(entity::sea_orm_active_enums::StatusEnum::Pending);
 
-                            let next_time =
-                                (Utc::now() + Duration::milliseconds(backoff)).naive_utc();
+                                let exp = attempts.max(0) as u32;
+                                let mut backoff = 1000 * 2i64.pow(exp);
+                                let jitter: i64 = rand::rng().random_range(-500..=500);
+                                backoff = (backoff + jitter).max(0);
 
-                            active.next_run_at = Set(next_time);
+                                let next_time =
+                                    (Utc::now() + Duration::milliseconds(backoff)).naive_utc();
+                                active.next_run_at = Set(next_time);
+                            }
+
+                            active.updated_at = Set(Utc::now().naive_utc());
+
+                            metrics::counter!("job_execution_result", "status" => "failure")
+                                .increment(1);
                         }
 
-                        active.updated_at = Set(Utc::now().naive_utc());
-
-                        metrics::counter!("job_execution_result", "status" => "failure")
-                            .increment(1);
-                    }
-
-                    active.update(txn).await?;
-                    Ok(())
+                        active.update(txn).await?;
+                        Ok(())
+                    })
                 })
-            })
-            .await;
+                .await
+            {
+                tracing::error!("Failed to update job {} after execution: {}", job.id, e);
+            }
+        }
+        .instrument(info_span!("Processing job", job_id = %job.id))
+        .await;
     }
 }
 
