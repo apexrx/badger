@@ -44,6 +44,7 @@ struct JobRequest {
     method: String,
     headers: Option<JsonValue>,
     body: Option<JsonValue>,
+    run_at: Option<chrono::DateTime<Utc>>,
 }
 
 fn create_fingerprint(
@@ -51,6 +52,7 @@ fn create_fingerprint(
     url: String,
     headers: Option<JsonValue>,
     body: Option<JsonValue>,
+    run_at: Option<chrono::DateTime<Utc>>,
 ) -> String {
     // if headers are present, extract headers - authorization, content-type, idempotency-key(if present)
     // convert keys to lowercase
@@ -74,8 +76,10 @@ fn create_fingerprint(
     // if body is present convert to string
     let body_str = body.map(|body| body.to_string()).unwrap_or_default();
 
+    let run_ts: i64 = run_at.map(|t| t.timestamp()).unwrap_or(0);
+
     // create a string of method, url, headers, body in the format: METHOD + | + URL + | + BODY + | + HEADER_STRING
-    let fingerprint = format!("{}|{}|{}|{}", method, url, body_str, headers_str);
+    let fingerprint = format!("{}|{}|{}|{}|{}", method, url, body_str, headers_str, run_ts);
 
     // hashing
     let mut hasher = Sha256::new();
@@ -97,7 +101,19 @@ async fn create_job(
     let headers: Option<JsonValue> = payload.headers.clone();
     let body: Option<JsonValue> = payload.body.clone();
 
-    let unique_id = create_fingerprint(method.clone(), url.clone(), headers.clone(), body.clone());
+    let run_at = if let Some(run_at) = payload.run_at {
+        Some(run_at)
+    } else {
+        Some(Utc::now())
+    };
+
+    let unique_id = create_fingerprint(
+        method.clone(),
+        url.clone(),
+        headers.clone(),
+        body.clone(),
+        run_at.clone(),
+    );
 
     let new_job = job::ActiveModel {
         unique_id: Set(unique_id.clone()),
@@ -107,7 +123,7 @@ async fn create_job(
         body: Set(body.unwrap_or(serde_json::json!(null))),
         retries: Set(0),
         attempts: Set(0),
-        next_run_at: Set(now),
+        next_run_at: Set(run_at.unwrap().naive_utc()),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
