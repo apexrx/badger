@@ -240,6 +240,13 @@ async fn worker_task(state: AppState) {
             }
         };
 
+        let start = Instant::now();
+
+        let delta = now - job.next_run_at;
+        let lag = delta.to_std().map(|d| d.as_secs_f64()).unwrap_or(0.0);
+
+        metrics::histogram!("job_queue_lag_seconds").record(lag);
+
         async {
             info!("Job picked up");
 
@@ -413,6 +420,10 @@ async fn worker_task(state: AppState) {
         }
         .instrument(info_span!("Processing job", job_id = %job.id))
         .await;
+
+        let duration = start.elapsed().as_secs_f64();
+
+        metrics::histogram!("job_execution_duration_seconds").record(duration);
     }
 }
 
@@ -452,6 +463,24 @@ async fn monitor_task(state: AppState) {
                 eprintln!("Error fetching job: {}", e);
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
+        }
+
+        // Measure Queue Depth
+        let now = Utc::now().naive_utc();
+        let pending_jobs = job::Entity::find()
+            .filter(job::Column::Status.eq(entity::sea_orm_active_enums::StatusEnum::Pending))
+            .filter(
+                job::Column::NextRunAt
+                    .is_null()
+                    .or(job::Column::NextRunAt.lt(now)),
+            )
+            .count(&state.db)
+            .await;
+
+        if let Ok(count) = pending_jobs {
+            metrics::gauge!("job_queue_depth").set(count as f64);
+        } else if let Err(e) = pending_jobs {
+            eprintln!("Error fetching pending jobs count: {}", e);
         }
     }
 }
