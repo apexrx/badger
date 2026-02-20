@@ -3,6 +3,7 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::{Router, routing::post};
 use chrono::{Duration, NaiveDateTime, Utc};
+use cron::Schedule;
 use dotenvy::dotenv;
 use governor::clock::Clock;
 use governor::clock::DefaultClock;
@@ -14,7 +15,7 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use rand::{Rng, RngExt};
 use reqwest::{Method, RequestBuilder};
 use sea_orm::entity::prelude::*;
-use sea_orm::sea_query::{Expr, LockBehavior, LockType};
+use sea_orm::sea_query::{Expr, LockBehavior, LockType, expr};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, Condition, IntoActiveModel, QueryFilter, QueryOrder,
     QuerySelect, Set, TransactionTrait,
@@ -23,6 +24,7 @@ use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{Instrument, error, info, info_span};
@@ -45,6 +47,7 @@ struct JobRequest {
     headers: Option<JsonValue>,
     body: Option<JsonValue>,
     run_at: Option<chrono::DateTime<Utc>>,
+    cron: Option<String>,
 }
 
 fn create_fingerprint(
@@ -100,6 +103,7 @@ async fn create_job(
     let method = payload.method.clone();
     let headers: Option<JsonValue> = payload.headers.clone();
     let body: Option<JsonValue> = payload.body.clone();
+    let cron_exp: Option<String> = payload.cron.clone();
 
     let run_at = if let Some(run_at) = payload.run_at {
         Some(run_at)
@@ -126,6 +130,7 @@ async fn create_job(
         next_run_at: Set(run_at.unwrap().naive_utc()),
         created_at: Set(now),
         updated_at: Set(now),
+        cron: Set(cron_exp),
         ..Default::default()
     };
 
@@ -159,6 +164,19 @@ async fn create_job(
         Err(e) => {
             println!("Database insertion error: {}", e);
             Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+fn next_execution_time(expr: String) -> Option<chrono::DateTime<chrono::Utc>> {
+    match Schedule::from_str(&expr) {
+        Ok(schedule) => {
+            let next = schedule.upcoming(Utc).next()?;
+            Some(next)
+        }
+        Err(e) => {
+            eprintln!("Invalid cron expression: {}", e);
+            None
         }
     }
 }
@@ -372,7 +390,34 @@ async fn worker_task(state: AppState) {
                         let mut active = job.clone().into_active_model();
 
                         if status.is_success() {
-                            active.status = Set(entity::sea_orm_active_enums::StatusEnum::Success);
+                            let cron_exp = job.cron.clone();
+
+                            match cron_exp {
+                                Some(exp) => {
+                                    let next_time = next_execution_time(exp.clone());
+
+                                    if let Some(dt) = next_time {
+                                        active.status =
+                                            Set(entity::sea_orm_active_enums::StatusEnum::Pending);
+                                        active.next_run_at = Set(dt.naive_utc());
+                                        active.attempts = Set(0);
+                                        active.retries = Set(0);
+                                    } else {
+                                        active.status =
+                                            Set(entity::sea_orm_active_enums::StatusEnum::Failure);
+                                        tracing::error!(
+                                            "Cron expression for job {} is invalid: {}",
+                                            job.id,
+                                            exp
+                                        );
+                                    }
+                                }
+                                None => {
+                                    active.status =
+                                        Set(entity::sea_orm_active_enums::StatusEnum::Success);
+                                }
+                            }
+
                             active.updated_at = Set(Utc::now().naive_utc());
                             active.retries = Set((job.attempts - 1).max(0));
 

@@ -1,6 +1,6 @@
 [package]
 name = "badger"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 
 [dependencies]
@@ -10,7 +10,7 @@ sea-orm = { version = "1.1.19", features = ["sqlx-postgres", "runtime-tokio-rust
 serde = { version = "1.0.228", features = ["derive"] }
 dotenvy = "0.15.7"
 serde_json = "1.0.149"
-chrono = { version = "0.4.43", features = ["serde"] }
+chrono = { version = "0.4.43", features = ["serde", "clock"] }
 uuid = "1.20.0"
 reqwest = { version = "0.13.2", features = ["json", "rustls"] }
 anyhow = "1.0.101"
@@ -24,3 +24,4 @@ metrics-exporter-prometheus = "0.18.1"
 governor = "0.10.4"
 nonzero_ext = "0.3.0"
 url = "2.5.8"
+cron = "0.15.0"
