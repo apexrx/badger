@@ -36,30 +36,50 @@
 </p>
 </div>
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Running Badger](#running-badger)
-- [Makefile Commands](#makefile-commands)
-- [Observability](#observability)
-- [Contributing](#contributing)
-- [License](#license)
-
 ## Overview
 
-Badger is designed to handle long-running or unreliable HTTP work safely outside of your main application's request lifecycle. It pairs a persistent database-backed queue with a high-performance Rust asynchronous worker pool, giving you full visibility into latency, queue lag, and throughput.
+**Badger** is a durable background job executor for HTTP work. It allows your main application to offload slow, unreliable, or long-running HTTP tasks (webhooks, API calls, notifications) to a separate, fault-tolerant system.
+
+Jobs are persisted, executed asynchronously, retried on failure, and fully observable via metrics and dashboards.
+
+## How It Works
+
+1. Clients submit HTTP jobs to Badger via a REST API  
+2. Jobs are stored durably in PostgreSQL or SQLite  
+3. A bounded async worker pool pulls and executes jobs  
+4. Failures are retried with exponential backoff + jitter  
+5. Heartbeats ensure jobs are recovered if a worker crashes  
+
+## Execution Guarantees
+
+Badger provides:
+
+- **At-least-once execution**
+- **Durable job persistence before execution**
+- **Crash-safe recovery via heartbeats**
+- **Exponential backoff retries with jitter**
+- **Bounded concurrency and backpressure**
+
 
 ## Features
 
--   **Persistent Queue**: Backed by PostgreSQL or SQLite to ensure zero data loss.
--   **Asynchronous Pool**: High-performance worker pool with bounded concurrency.
--   **Smart Retries**: Exponential backoff with retry and jitter to prevent thundering herds.
--   **Crash Recovery**: Built-in heartbeats ensure jobs survive unexpected worker crashes.
--   **Rate Limiting**: Built-in per-host rate limiting to respect downstream API constraints.
--   **First-Class Observability**: Pre-configured with Prometheus and Grafana for out-of-the-box queue depth, latency, and lag metrics.
+- **Durable Queue**  
+  Jobs are stored in PostgreSQL or SQLite to ensure persistence across restarts.
+
+- **Async Worker Pool**  
+  High-performance Tokio-based workers with bounded concurrency.
+
+- **Retry Engine**  
+  Exponential backoff with jitter to avoid retry storms.
+
+- **Crash Recovery**  
+  Worker heartbeats detect and reclaim stalled jobs automatically.
+
+- **Per-host Rate Limiting**  
+  Prevents overwhelming downstream APIs.
+
+- **Prometheus Metrics + Grafana Dashboards**  
+  Built-in observability for queue depth, latency, retries, and worker utilization.
 
 ## Prerequisites
 
