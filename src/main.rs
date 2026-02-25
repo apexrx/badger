@@ -535,9 +535,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
     dotenv().ok();
 
-    // Prometheus
-    let builder = PrometheusBuilder::new();
-    let handle = builder
+    let recorder_handle = PrometheusBuilder::new()
         .install_recorder()
         .expect("failed to install recorder");
 
@@ -571,7 +569,10 @@ async fn main() {
     let app = Router::new()
         .route("/jobs", post(create_job))
         .route("/jobs/{id}", axum::routing::get(get_job))
-        .route("/metrics", get(move || std::future::ready(handle.render())))
+        .route(
+            "/metrics",
+            get(move || std::future::ready(recorder_handle.render())),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
