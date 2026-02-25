@@ -31,7 +31,7 @@
     <img src="https://img.shields.io/github/issues-pr/apexrx/badger.svg?style=flat-square" alt="Open Pull Requests">
   </a>
   <a href="https://github.com/apexrx/badger/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/apexrx/badger.svg?style=flat-square" alt="License">
+    <img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="MIT License">
   </a>
 </p>
 </div>
