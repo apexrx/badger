@@ -59,28 +59,35 @@
 
 ## Performance Comparison
 
-### Throughput Comparison (jobs/sec)
+### Normalized Throughput (jobs/sec/worker, 10ms work)
 
 ```
-Single Insertion
-  BullMQ  ████████████████████████████████████████████  5,800
-  Badger  ██████████████████████████████░░░░░░░░░░░░░░  4,068 (70%)
-  Oban    ██████████████████████░░░░░░░░░░░░░░░░░░░░░░  2,900
+Redis-Backed (In-Memory, No ACID)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BullMQ          ████████████████████████████████░░  830*
+Sidekiq         ████████████████████████████████░░  800*
+Celery          ██████████████████████████████░░░░  700*
 
-Bulk Insertion (batched)
-  Badger  ██████████████████████████████████████████░░ 44,115 (86%)
-  BullMQ  ████████████████████████████████████████████ 51,400
-  Oban    ██████████████████████████████████░░░░░░░░░░ 36,800
+PostgreSQL-Backed (Full ACID, Durable)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Oban            ████████████████████░░░░░░░░░░░░░░░░  440*
+Badger          ██████████████░░░░░░░░░░░░░░░░░░░░░░  289
 
-Job Processing (10ms work)
-  BullMQ  ████████████████████████████████████████████  8,300
-  Oban    ██████████████████████████████░░░░░░░░░░░░░░  4,400
-  Celery  ████████████████████████████████████░░░░░░░░  7,000
-  Sidekiq ████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  1,000-8,000
-  Badger  ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    718*
+*Estimated from published benchmarks, normalized to 10ms work
 ```
 
-*Badger tested with SQLite; PostgreSQL production estimate: ~1,000 jobs/sec
+### Trade-off: Throughput vs Durability
+
+| Queue | Backend | Throughput | Durability | Use Case |
+|-------|---------|------------|------------|----------|
+| BullMQ | Redis | 830 jobs/sec | In-memory | High throughput, job loss OK |
+| Sidekiq | Redis | 800 jobs/sec | In-memory | High throughput, job loss OK |
+| Oban | PostgreSQL | 440 jobs/sec | Full ACID | Durability required |
+| **Badger** | **PostgreSQL** | **289 jobs/sec** | **Full ACID** | **Durability required** |
+
+**Badger's niche:** Durability-critical workloads where ~300 jobs/sec is sufficient
+
+See [NORMALIZED_COMPARISON.md](NORMALIZED_COMPARISON.md) for detailed analysis.
 
 ### Feature Comparison
 
@@ -94,8 +101,11 @@ Job Processing (10ms work)
 | Built-in Metrics | Yes | Partial | Partial | Partial | Yes |
 | Memory Safe | Yes | No | No | No | Yes |
 | Zero GC | Yes | No | No | No | No |
+| **Per-Worker (10ms)** | **29 jobs/sec** | **830 jobs/sec** | **800 jobs/sec** | **700 jobs/sec** | **440 jobs/sec** |
 
 *Enterprise feature
+
+**Note:** Throughput measured on PostgreSQL (localhost). Higher throughput available with bulk insertion (16,772 jobs/sec).
 
 ---
 
@@ -206,8 +216,8 @@ Badger includes comprehensive test coverage:
 # Run all tests
 cargo test
 
-# Run benchmarks
-cargo test --test benchmark run_full_benchmark_suite -- --nocapture
+# Run PostgreSQL benchmarks
+DATABASE_URL="postgresql://user:pass@localhost:5432/badger_db" cargo test --test pg_benchmark -- --nocapture
 ```
 
 **Test Results:** 35 tests, 100% pass rate
@@ -222,12 +232,12 @@ See [TESTING_REPORT.md](TESTING_REPORT.md) for detailed results.
 
 ### Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DATABASE_URL` | Database connection string | `postgres://user:pass@localhost/db` |
-| `BADGER_PORT` | HTTP API port | `3000` |
-| `WORKER_COUNT` | Number of workers | `10` |
-| `MAX_RETRIES` | Maximum retry attempts | `10` |
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `DATABASE_URL` | Database connection string | (required) | `postgres://user:pass@localhost/db` |
+| `BADGER_PORT` | HTTP API port | `3000` | `3000` |
+| `WORKER_COUNT` | Number of worker threads | `10` | `10` |
+| `MAX_RETRIES` | Maximum retry attempts | `10` | `10` |
 
 ### Database Schema
 

@@ -199,9 +199,7 @@ async fn get_job(
     }
 }
 
-async fn worker_task(state: AppState) {
-    let max_attempts = 10;
-
+async fn worker_task(state: AppState, max_attempts: i32) {
     // Built once, outside the loop
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -535,6 +533,18 @@ async fn main() {
     tracing_subscriber::fmt::init();
     dotenv().ok();
 
+    // Load configuration from environment variables
+    let port = std::env::var("BADGER_PORT")
+        .unwrap_or_else(|_| "3000".to_string());
+    let worker_count: usize = std::env::var("WORKER_COUNT")
+        .unwrap_or_else(|_| "10".to_string())
+        .parse()
+        .unwrap_or(10);
+    let max_retries: i32 = std::env::var("MAX_RETRIES")
+        .unwrap_or_else(|_| "10".to_string())
+        .parse()
+        .unwrap_or(10);
+
     let recorder_handle = PrometheusBuilder::new()
         .install_recorder()
         .expect("failed to install recorder");
@@ -544,6 +554,10 @@ async fn main() {
     let db = sea_orm::Database::connect(db_url).await.unwrap();
 
     println!("Database connection established");
+    println!("Configuration:");
+    println!("  - Port: {}", port);
+    println!("  - Workers: {}", worker_count);
+    println!("  - Max Retries: {}", max_retries);
 
     let quota = Quota::per_second(NonZeroU32::new(5).unwrap());
     let limiter = Arc::new(RateLimiter::new(
@@ -555,11 +569,16 @@ async fn main() {
     // Axum router setup
     let state = AppState { db, limiter };
 
-    // worker
-    let worker_state = state.clone();
-    let worker = tokio::spawn(async move {
-        worker_task(worker_state).await;
-    });
+    // Spawn workers
+    let mut worker_handles = Vec::new();
+    for i in 0..worker_count {
+        let worker_state = state.clone();
+        let worker = tokio::spawn(async move {
+            println!("Worker {} started", i);
+            worker_task(worker_state, max_retries).await;
+        });
+        worker_handles.push(worker);
+    }
 
     let monitor_state = state.clone();
     let monitor = tokio::spawn(async move {
@@ -575,7 +594,8 @@ async fn main() {
         )
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Server listening on port 3000!");
+    let bind_addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
+    println!("Server listening on port {}!", port);
     axum::serve(listener, app).await.unwrap();
 }
