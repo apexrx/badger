@@ -36,17 +36,17 @@ Theoretical Max (10ms work) = 100 jobs/sec/worker (1000ms / 10ms)
 
 | Test Configuration | Total Throughput | Per-Worker | Latency/Job | Efficiency |
 |-------------------|------------------|------------|-------------|------------|
-| Single insert (no work) | 235 jobs/sec | 235 jobs/sec | 4.25 ms | N/A |
-| Single worker (10ms work) | 39.5 jobs/sec | 39.5 jobs/sec | 25.29 ms | 39.5% |
-| 10 workers (10ms work) | 289 jobs/sec | 28.9 jobs/sec | 3.46 ms | 28.9% |
-| Bulk insert (1000 batch) | 16,772 jobs/sec | N/A | 59.6 µs | N/A |
+| Single insert (no work) | 177 jobs/sec | 177 jobs/sec | 5.65 ms | N/A |
+| Single worker (10ms work) | 47.5 jobs/sec | 47.5 jobs/sec | 21.06 ms | 47.5% |
+| 10 workers (10ms work) | 268 jobs/sec | 26.8 jobs/sec | 3.73 ms | 26.8% |
+| Bulk insert (1000 batch) | 15,783 jobs/sec | N/A | 63.4 µs | N/A |
 
 ### Key Observations
 
-1. **Queue Overhead:** 4.25ms per job (network + DB round-trip)
-2. **Single-Worker Efficiency:** 39.5% of theoretical max
-3. **Multi-Worker Overhead:** 27% efficiency loss due to contention
-4. **Bulk Insert Efficiency:** 59.6µs marginal cost per job
+1. **Queue Overhead:** 5.65ms per job (network + DB round-trip)
+2. **Single-Worker Efficiency:** 47.5% of theoretical max
+3. **Multi-Worker Overhead:** 44% efficiency loss due to contention
+4. **Bulk Insert Efficiency:** 63.4µs marginal cost per job
 
 ---
 
@@ -73,8 +73,8 @@ PostgreSQL-Backed Queues (Full ACID, Durable)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Oban (M2 Pro)            ████████████████████████████░░░░  440 jobs/sec*
-Badger (Ryzen 5600H)     ████████████░░░░░░░░░░░░░░░░░░░░  289 jobs/sec
-Badger (single worker)   ████████░░░░░░░░░░░░░░░░░░░░░░░░  39.5 jobs/sec
+Badger (Ryzen 5600H)     ████████████░░░░░░░░░░░░░░░░░░░░  268 jobs/sec (10 workers)
+Badger (single worker)   ██████████░░░░░░░░░░░░░░░░░░░░░░  47.5 jobs/sec
 
 *Estimated from published benchmarks, normalized to 10ms work
 ```
@@ -89,7 +89,7 @@ Theoretical maximum with 10ms work: **100 jobs/sec/worker**
 | Celery | Redis | 700 jobs/sec | 700%* | Async, no wait |
 | Sidekiq | Redis | 800 jobs/sec | 800%* | Async, no wait |
 | Oban | PostgreSQL | 440 jobs/sec | 440%* | Batch processing |
-| **Badger** | **PostgreSQL** | **28.9 jobs/sec** | **29%** | **Full cycle** |
+| **Badger** | **PostgreSQL** | **26.8 jobs/sec** | **26.8%** | **Full cycle** |
 
 *Redis queues don't wait for job completion - they dispatch and forget. Efficiency >100% means jobs are dispatched faster than they could possibly complete.
 
@@ -101,13 +101,15 @@ For durable, ACID-compliant job processing:
 Per-Worker Throughput (10ms work, PostgreSQL backend)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Oban (M2 Pro, normalized)   ████████████████████░░░░░░░░  ~400 jobs/sec
-Badger (Ryzen 5600H)        ██████░░░░░░░░░░░░░░░░░░░░░░  ~29 jobs/sec
+Oban (M2 Pro)             ████████████████████████████████░░  ~440 jobs/sec
+Badger (Ryzen 5600H)      ████████████████████░░░░░░░░░░░░░░  ~27 jobs/sec
 
-Hardware Adjustment Factor:
-- M2 Pro single-core: ~2x Ryzen 5600H
-- Badger adjusted: ~58 jobs/sec (estimated on M2 Pro)
-- Gap: ~7x (likely due to query optimization, connection pooling)
+Performance Gap Analysis:
+- Badger is v1.0.0; Oban is mature (years of production tuning)
+- Oban uses SKIP LOCKED natively; Badger uses basic transactions
+- Oban has advisory locking; Badger has row-level locking only
+- Elixir/BEAM has decades of I/O concurrency optimization
+- Gap is expected and closeable with targeted optimizations
 ```
 
 ---

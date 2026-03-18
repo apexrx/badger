@@ -2,3 +2,6 @@
 .env
 /migration/target
 *.db
+
+# High-load test files
+tests/high_load_benchmark.rs
