@@ -1,4 +1,4 @@
-# 🦡 Badger Testing Report
+# Badger Testing Report
 
 **Version:** 1.0.0  
 **Report Date:** March 18, 2026  
@@ -27,19 +27,16 @@
 | Metric | Result |
 |--------|--------|
 | **Total Tests** | 35 |
-| **Pass Rate** | 100% ✅ |
+| **Pass Rate** | 100% |
 | **Benchmarks** | 8 |
 | **Features Validated** | 7/7 |
 
 ### Key Findings
 
-✅ **All functional tests pass** - Job submission, execution, retry logic, and persistence work correctly
-
-⚠️ **SQLite limitations** - Concurrent operations limited by SQLite locking (no SKIP LOCKED support)
-
-📊 **Bulk insertion competitive** - 44,115 jobs/sec (86% of BullMQ) for batched inserts
-
-🎯 **Production estimate** - ~1,000 jobs/sec expected with PostgreSQL for full job processing
+- **All functional tests pass** - Job submission, execution, retry logic, and persistence work correctly
+- **SQLite limitations** - Concurrent operations limited by SQLite locking (no SKIP LOCKED support)
+- **Bulk insertion competitive** - 44,115 jobs/sec (86% of BullMQ) for batched inserts
+- **Production estimate** - ~1,000 jobs/sec expected with PostgreSQL for full job processing
 
 ---
 
@@ -77,11 +74,11 @@ Database: SQLite (testing), PostgreSQL (production)
 
 | Category | Tests | Status | Duration |
 |----------|-------|--------|----------|
-| Job CRUD | 6 | ✅ Pass | 0.02s |
-| Status Transitions | 4 | ✅ Pass | 0.01s |
-| Scheduling | 3 | ✅ Pass | 0.01s |
-| Concurrency | 3 | ✅ Pass | 0.05s |
-| Performance | 4 | ✅ Pass | 0.07s |
+| Job CRUD | 6 | Pass | 0.02s |
+| Status Transitions | 4 | Pass | 0.01s |
+| Scheduling | 3 | Pass | 0.01s |
+| Concurrency | 3 | Pass | 0.05s |
+| Performance | 4 | Pass | 0.07s |
 
 **Sample Test Output:**
 ```
@@ -98,23 +95,23 @@ test result: ok. 20 passed; 0 failed; 0 ignored
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| Serialization | 5 | ✅ Pass |
-| Validation | 4 | ✅ Pass |
-| Utilities | 4 | ✅ Pass |
-| Cron | 2 | ✅ Pass |
+| Serialization | 5 | Pass |
+| Validation | 4 | Pass |
+| Utilities | 4 | Pass |
+| Cron | 2 | Pass |
 
 ### Benchmark Tests (8 tests)
 
 | Benchmark | Throughput | Status |
 |-----------|------------|--------|
-| Single Insert | 4,068 jobs/sec | ✅ |
-| Concurrent Insert | 3,650 jobs/sec | ✅ |
-| Bulk Insert | 44,115 jobs/sec | ✅ |
-| Concurrent Bulk | 26,415 jobs/sec | ✅ |
-| Job Processing (10ms) | 718 jobs/sec | ✅ |
-| Queue Overhead | 1,816 jobs/sec | ✅ |
-| CPU-Bound (1ms) | 1,078 jobs/sec | ✅ |
-| Batch Sizes | 26K-42K jobs/sec | ✅ |
+| Single Insert | 4,068 jobs/sec | Pass |
+| Concurrent Insert | 3,650 jobs/sec | Pass |
+| Bulk Insert | 44,115 jobs/sec | Pass |
+| Concurrent Bulk | 26,415 jobs/sec | Pass |
+| Job Processing (10ms) | 718 jobs/sec | Pass |
+| Queue Overhead | 1,816 jobs/sec | Pass |
+| CPU-Bound (1ms) | 1,078 jobs/sec | Pass |
+| Batch Sizes | 26K-42K jobs/sec | Pass |
 
 ---
 
@@ -123,6 +120,7 @@ test result: ok. 20 passed; 0 failed; 0 ignored
 ### Job Lifecycle Tests
 
 #### Job Creation & Retrieval
+
 ```rust
 #[tokio::test]
 async fn test_job_insert_and_retrieve() {
@@ -136,37 +134,40 @@ async fn test_job_insert_and_retrieve() {
 }
 ```
 
-**Result:** ✅ Pass - Jobs persist and retrieve correctly
+**Result:** Pass - Jobs persist and retrieve correctly
 
 #### Status Transitions
+
 ```
-Pending → Running → Success
-   ↓          ↓
-   └────────→ Failure
+Pending --> Running --> Success
+   |          |
+   |          +------> Failure
+   |
+   +-- (retry) --+
 ```
 
 **Test Coverage:**
-- ✅ Pending → Running (claim)
-- ✅ Running → Success (complete)
-- ✅ Running → Failure (error)
-- ✅ Running → Pending (crash recovery)
+- Pending to Running (claim)
+- Running to Success (complete)
+- Running to Failure (error)
+- Running to Pending (crash recovery)
 
 ### Retry Logic Tests
 
 **Exponential Backoff Formula:**
 ```
-backoff = 1000ms × 2^attempts + jitter(-500ms to +500ms)
+backoff = 1000ms * 2^attempts + jitter(-500ms to +500ms)
 ```
 
 | Attempt | Base Delay | With Jitter | Tested |
 |---------|------------|-------------|--------|
-| 1 | 2s | 1.5s - 2.5s | ✅ |
-| 2 | 4s | 3.5s - 4.5s | ✅ |
-| 3 | 8s | 7.5s - 8.5s | ✅ |
-| 4 | 16s | 15.5s - 16.5s | ✅ |
-| 5 | 32s | 31.5s - 32.5s | ✅ |
+| 1 | 2s | 1.5s - 2.5s | Yes |
+| 2 | 4s | 3.5s - 4.5s | Yes |
+| 3 | 8s | 7.5s - 8.5s | Yes |
+| 4 | 16s | 15.5s - 16.5s | Yes |
+| 5 | 32s | 31.5s - 32.5s | Yes |
 
-**Max Retries:** Jobs marked as `Failure` after 10 attempts ✅
+**Max Retries:** Jobs marked as `Failure` after 10 attempts
 
 ### Cron Scheduling Tests
 
@@ -174,14 +175,15 @@ backoff = 1000ms × 2^attempts + jitter(-500ms to +500ms)
 
 | Expression | Meaning | Status |
 |------------|---------|--------|
-| `0 0 * * * *` | Every hour | ✅ Valid |
-| `0 0 0 * * *` | Daily at midnight | ✅ Valid |
-| `0 0 0 * * 1-5` | Weekdays at midnight | ✅ Valid |
-| `60 * * * * *` | Invalid (seconds > 59) | ✅ Rejected |
+| `0 0 * * * *` | Every hour | Valid |
+| `0 0 0 * * *` | Daily at midnight | Valid |
+| `0 0 0 * * 1-5` | Weekdays at midnight | Valid |
+| `60 * * * * *` | Invalid (seconds > 59) | Rejected |
 
 ### Concurrency Tests
 
 #### Duplicate Prevention
+
 ```rust
 #[tokio::test]
 async fn test_duplicate_unique_id_prevention() {
@@ -196,6 +198,7 @@ async fn test_duplicate_unique_id_prevention() {
 ```
 
 #### Concurrent Job Claims
+
 ```sql
 -- SQLite-compatible (no SKIP LOCKED)
 UPDATE job SET status = 'Running' 
@@ -204,7 +207,8 @@ WHERE rowid IN (
     WHERE status = 'Pending' LIMIT 5
 )
 ```
-**Result:** ✅ 5 jobs claimed, no duplicates
+
+**Result:** 5 jobs claimed, no duplicates
 
 ---
 
@@ -227,7 +231,7 @@ All benchmarks follow the BullMQ methodology for fair comparison:
 Iterations:    1000
 Duration:      245.84ms
 Throughput:    4,067.75 jobs/sec
-Latency (avg): 245.84 µs
+Latency (avg): 245.84 us
 ```
 
 ### Concurrent Single Insertion
@@ -307,6 +311,7 @@ Throughput:    1,077.68 jobs/sec
 All competitive data sourced from official vendor benchmarks and production deployments.
 
 #### BullMQ (Redis-backed)
+
 **Source:** bullmq.io official benchmarks (February 2026)  
 **Hardware:** MacBook Pro M2 Pro, 16GB RAM, Redis 7.x
 
@@ -319,6 +324,7 @@ All competitive data sourced from official vendor benchmarks and production depl
 | Queue Overhead | 25,600 jobs/sec |
 
 #### Oban (PostgreSQL-backed)
+
 **Source:** bullmq.io official benchmarks (February 2026)  
 **Hardware:** MacBook Pro M2 Pro, 16GB RAM, PostgreSQL 16
 
@@ -331,6 +337,7 @@ All competitive data sourced from official vendor benchmarks and production depl
 | Job Processing (10ms) | 4,400 jobs/sec |
 
 #### Sidekiq (Redis-backed)
+
 **Source:** GitHub production data (Mastodon)
 
 | Metric | Throughput |
@@ -339,6 +346,7 @@ All competitive data sourced from official vendor benchmarks and production depl
 | Spike Handling | 100,000+ jobs |
 
 #### Celery (Redis/RabbitMQ-backed)
+
 **Source:** Performance stress tests
 
 | Metric | Throughput |
@@ -359,66 +367,67 @@ All competitive data sourced from official vendor benchmarks and production depl
 ### Performance Ratios (vs BullMQ = 100%)
 
 ```
-Single Insert:     Badger ████████░░░░░░░░░░░░ 70%
-Concurrent Insert: Badger ████░░░░░░░░░░░░░░░░ 21%
-Bulk Insert:       Badger █████████████████░░░ 86%
-Job Processing:    Badger █░░░░░░░░░░░░░░░░░░░  9%
-Queue Overhead:    Badger ██░░░░░░░░░░░░░░░░░░  7%
+Single Insert:     Badger [========            ] 70%
+Concurrent Insert: Badger [====                ] 21%
+Bulk Insert:       Badger [================    ] 86%
+Job Processing:    Badger [=                   ]  9%
+Queue Overhead:    Badger [==                  ]  7%
 ```
 
 ### Feature Comparison
 
 | Feature | Badger | BullMQ | Sidekiq | Celery | Oban |
 |---------|--------|--------|---------|--------|------|
-| At-least-once | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Durable Persistence | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Crash Recovery | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
-| Rate Limiting | ✅ | ✅ | ✅ (Ent) | ⚠️ | ✅ |
-| Cron Scheduling | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Built-in Metrics | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
-| Memory Safety | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Zero GC | ✅ | ❌ | ❌ | ❌ | ❌ |
+| At-least-once | Yes | Yes | Yes | Yes | Yes |
+| Durable Persistence | Yes | No | No | No | Yes |
+| Crash Recovery | Yes | Partial | Partial | Partial | Yes |
+| Rate Limiting | Yes | Yes | Yes* | Partial | Yes |
+| Cron Scheduling | Yes | Yes | Yes | Yes | Yes |
+| Built-in Metrics | Yes | Partial | Partial | Partial | Yes |
+| Memory Safety | Yes | No | No | No | Yes |
+| Zero GC | Yes | No | No | No | No |
 
-**Legend:** ✅ Built-in | ⚠️ Plugin/Extension/Enterprise | ❌ Not available
+*Enterprise feature
 
 ---
 
 ## Feature Validation
 
-### ✅ Validated Features
+### Validated Features
 
 | Feature | Test Coverage | Status |
 |---------|---------------|--------|
-| Job Submission API | `test_job_insert_and_retrieve` | ✅ Pass |
-| Job Deduplication | `test_duplicate_unique_id_prevention` | ✅ Pass |
-| Retry Mechanism | `test_retry_counter_update`, `test_max_retries_exceeded` | ✅ Pass |
-| Cron Scheduling | `test_job_with_cron`, `test_cron_expression_parsing` | ✅ Pass |
-| Rate Limiting | `test_rate_limiter_quota` | ✅ Pass |
-| Crash Recovery | `test_check_in_heartbeat` | ✅ Pass |
-| Observability | Metrics endpoint structure validated | ✅ Pass |
+| Job Submission API | test_job_insert_and_retrieve | Pass |
+| Job Deduplication | test_duplicate_unique_id_prevention | Pass |
+| Retry Mechanism | test_retry_counter_update, test_max_retries_exceeded | Pass |
+| Cron Scheduling | test_job_with_cron, test_cron_expression_parsing | Pass |
+| Rate Limiting | test_rate_limiter_quota | Pass |
+| Crash Recovery | test_check_in_heartbeat | Pass |
+| Observability | Metrics endpoint structure validated | Pass |
 
 ### API Endpoints
 
 | Endpoint | Method | Purpose | Tested |
 |----------|--------|---------|--------|
-| `/jobs` | POST | Create job | ✅ |
-| `/jobs/{id}` | GET | Retrieve job | ✅ |
-| `/metrics` | GET | Prometheus metrics | ✅ |
+| `/jobs` | POST | Create job | Yes |
+| `/jobs/{id}` | GET | Retrieve job | Yes |
+| `/metrics` | GET | Prometheus metrics | Yes |
 
 ### Job States
 
 ```
-┌─────────┐     ┌─────────┐     ┌─────────┐
-│ Pending │ ──→ │ Running │ ──→ │ Success │
-└────┬────┘     └────┬────┘     └─────────┘
-     │               │
-     │               ↓
-     │         ┌─────────┐
-     └──────── │ Failure │
-               └─────────┘
++---------+     +---------+     +---------+
+| Pending | --> | Running | --> | Success |
++----+----+     +----+----+     +---------+
+     |               |
+     |  (retry)      |  (error)
+     |               v
+     +---------> +---------+
+                 | Failure |
+                 +---------+
 ```
 
-All state transitions tested and validated ✅
+All state transitions tested and validated
 
 ---
 
@@ -428,17 +437,17 @@ All state transitions tested and validated ✅
 
 | Feature | PostgreSQL | SQLite | Impact |
 |---------|------------|--------|--------|
-| SKIP LOCKED | ✅ Native | ❌ Not supported | Concurrent job claims |
-| FOR UPDATE | ✅ Native | ⚠️ Limited | Row locking |
-| Enums | ✅ Native | ⚠️ TEXT | Type safety |
-| WAL | ✅ Native | ⚠️ Limited | Durability |
+| SKIP LOCKED | Native | Not supported | Concurrent job claims |
+| FOR UPDATE | Native | Limited | Row locking |
+| Enums | Native | TEXT | Type safety |
+| WAL | Native | Limited | Durability |
 
 **Recommendation:** Use PostgreSQL for production deployments.
 
 ### Performance Limitations
 
 1. **Concurrent Operations:** SQLite locking reduces parallel throughput
-2. **Job Processing:** Full cycle (claim→work→complete) is sequential
+2. **Job Processing:** Full cycle (claim->work->complete) is sequential
 3. **Network:** No network overhead in SQLite benchmarks (in-memory)
 
 ### Expected PostgreSQL Performance
@@ -450,10 +459,10 @@ All state transitions tested and validated ✅
 | Job Processing | 718 jobs/sec | 500-1,500 jobs/sec |
 
 **Factors affecting PostgreSQL performance:**
-- ✅ Better concurrency (SKIP LOCKED, row-level locking)
-- ⚠️ Network latency (0.5-2ms localhost, 5-50ms remote)
-- ⚠️ Disk I/O (unless using fast NVMe + sufficient shared_buffers)
-- ⚠️ WAL overhead (durability guarantee)
+- Better concurrency (SKIP LOCKED, row-level locking)
+- Network latency (0.5-2ms localhost, 5-50ms remote)
+- Disk I/O (unless using fast NVMe + sufficient shared_buffers)
+- WAL overhead (durability guarantee)
 
 ---
 
@@ -497,6 +506,7 @@ job_queue_lag_seconds
 ### Appendix C: Test Code Examples
 
 #### Creating a Test Job
+
 ```rust
 async fn create_test_job(
     db: &DatabaseConnection,
@@ -520,7 +530,7 @@ async fn create_test_job(
 
 ### Appendix D: Full Benchmark Output
 
-See the complete benchmark output in the [Benchmark Suite Output](#benchmark-suite-output) section.
+See the complete benchmark output in the main benchmark section.
 
 ### Appendix E: Changelog
 
@@ -537,7 +547,7 @@ See the complete benchmark output in the [Benchmark Suite Output](#benchmark-sui
 | Metric | Value |
 |--------|-------|
 | **Total Tests** | 35 |
-| **Pass Rate** | 100% ✅ |
+| **Pass Rate** | 100% |
 | **Benchmarks** | 8 |
 | **Features Validated** | 7/7 |
 
