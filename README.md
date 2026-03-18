@@ -214,6 +214,8 @@ cargo test --test benchmark run_full_benchmark_suite -- --nocapture
 
 See [TESTING_REPORT.md](TESTING_REPORT.md) for detailed results.
 
+> *Note: Qwen Code was used for testing purposes only.*
+
 ---
 
 ## Configuration
