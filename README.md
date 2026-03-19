@@ -1,5 +1,3 @@
-```
-
 
     ,---,.
   ,'  .'  \                 ,---,
@@ -15,7 +13,6 @@
 |   | ,'  |  ,     .-./\   \  /   |   :    : \   \  /
 `----'     `--`---'     `----'     \   \  /   `----'
                                     `--`-'
-```
 
 <div align="center">
 
@@ -47,65 +44,81 @@
 | **Rate Limiting** | Per-host throttling with Governor |
 | **Observability** | Prometheus metrics + Grafana dashboards |
 
-## Execution Guarantees
-
-- At-least-once execution
-- Durable job persistence before execution
-- Crash-safe recovery via heartbeats
-- Exponential backoff retries with jitter
-- Bounded concurrency and backpressure
-
 ---
 
-## Performance Comparison
+## Badger vs Oban
 
-### Normalized Throughput (jobs/sec/worker, 10ms work)
+Head-to-head comparison on identical hardware (AMD Ryzen 5 5600H, 16GB RAM, PostgreSQL). Full benchmark methodology and results available in the [Benchmark Report](testing/BENCHMARK_REPORT.md).
+
+### Insertion Performance
 
 ```
-Redis-Backed (In-Memory, No ACID)
+Single Job Insertion (jobs/sec) - Higher is Better
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BullMQ          ████████████████████████████████░░  830*
-Sidekiq         ████████████████████████████████░░  800*
-Celery          ██████████████████████████████░░░░  700*
-
-PostgreSQL-Backed (Full ACID, Durable)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Oban            ████████████████████░░░░░░░░░░░░░░░░  440*
-Badger          ██████████████░░░░░░░░░░░░░░░░░░░░░░  289
-
-*Estimated from published benchmarks, normalized to 10ms work
+Badger          ████████████████████████████████████  155.67
+Oban            ██████████████████████████░░░░░░░░░░  82.46
+                Badger is 88.8% faster
 ```
 
-### Trade-off: Throughput vs Durability
+```
+Concurrent Single Insertion (jobs/sec) - Higher is Better
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Badger          ████████████████████████████████████  1,530.21
+Oban            ████████████████░░░░░░░░░░░░░░░░░░░░  545.05
+                Badger is 180.7% faster
+```
 
-| Queue | Backend | Throughput | Durability | Use Case |
-|-------|---------|------------|------------|----------|
-| BullMQ | Redis | 830 jobs/sec | In-memory | High throughput, job loss OK |
-| Sidekiq | Redis | 800 jobs/sec | In-memory | High throughput, job loss OK |
-| Oban | PostgreSQL | 440 jobs/sec | Full ACID | Durability required |
-| **Badger** | **PostgreSQL** | **289 jobs/sec** | **Full ACID** | **Durability required** |
+```
+Bulk Insertion (jobs/sec) - Higher is Better
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Badger          ████████████████████████████████████  27,950.63
+Oban            ████████████████████░░░░░░░░░░░░░░░░  13,503.60
+                Badger is 107.0% faster
+```
 
-**Badger's niche:** Durability-critical workloads where ~300 jobs/sec is sufficient
+```
+Concurrent Bulk Insertion (jobs/sec) - Higher is Better
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Oban            ████████████████████████████████████  37,242.01
+Badger          ████████████████████████████░░░░░░░░  28,289.87
+                Oban is 31.6% faster
+```
 
-See [NORMALIZED_COMPARISON.md](NORMALIZED_COMPARISON.md) for detailed analysis.
+### Summary Table
 
-### Feature Comparison
+| Benchmark | Badger | Oban | Winner |
+|-----------|--------|------|--------|
+| Single Insert | 155.67 jobs/sec | 82.46 jobs/sec | **Badger** (+88.8%) |
+| Concurrent Insert | 1,530.21 jobs/sec | 545.05 jobs/sec | **Badger** (+180.7%) |
+| Bulk Insert | 27,950.63 jobs/sec | 13,503.60 jobs/sec | **Badger** (+107.0%) |
+| Concurrent Bulk | 28,289.87 jobs/sec | 37,242.01 jobs/sec | **Oban** (+31.6%) |
+| Insert Latency | 6,423 us | 12,127 us | **Badger** (-47%) |
+| Marginal Cost | 54.1 us/job | 72.7 us/job | **Badger** (-25.6%) |
 
-| Feature | Badger | BullMQ | Sidekiq | Celery | Oban |
-|---------|:------:|:------:|:-------:|:------:|:----:|
-| At-least-once | Yes | Yes | Yes | Yes | Yes |
-| Durable Persistence | Yes | No | No | No | Yes |
-| Crash Recovery | Yes | Partial | Partial | Partial | Yes |
-| Rate Limiting | Yes | Yes | Yes* | Partial | Yes |
-| Cron Scheduling | Yes | Yes | Yes | Yes | Yes |
-| Built-in Metrics | Yes | Partial | Partial | Partial | Yes |
-| Memory Safe | Yes | No | No | No | Yes |
-| Zero GC | Yes | No | No | No | No |
-| **Per-Worker (10ms)** | **29 jobs/sec** | **830 jobs/sec** | **800 jobs/sec** | **700 jobs/sec** | **440 jobs/sec** |
+### Single-Worker Processing (10ms work)
 
-*Enterprise feature
+| Metric | Badger | Oban | Winner |
+|--------|--------|------|--------|
+| Throughput | ~73 jobs/sec | ~41 jobs/sec | **Badger** |
 
-**Note:** Throughput measured on PostgreSQL (localhost). Higher throughput available with bulk insertion (16,772 jobs/sec).
+> **Note:** Full processing throughput comparison requires further instrumentation. Oban measures dispatch rate while Badger measures full claim to execute to complete cycle. See [Benchmark Report](testing/BENCHMARK_REPORT.md) for details.
+
+### When to Choose Badger
+
+- Single-job insertion patterns
+- Low-latency requirements
+- Memory-constrained environments
+- Zero-GC requirements
+- Rust ecosystem integration
+
+### When to Choose Oban
+
+- Concurrent bulk insertion patterns
+- Elixir/Phoenix ecosystem
+- Complex job workflows
+- Mature plugin ecosystem
+
+See the full [Benchmark Report](testing/BENCHMARK_REPORT.md) for detailed methodology and complete results.
 
 ---
 
@@ -161,28 +174,28 @@ Badger connects to your database and begins processing jobs immediately.
 ### How It Works
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │ ──→ │   Badger    │ ──→ │  HTTP Job   │
-│ Application │     │   Worker    │     │   Target    │
-└─────────────┘     └──────┬──────┘     └─────────────┘
-                           │
-                           ↓
-                    ┌─────────────┐
-                    │  PostgreSQL │
-                    │   / SQLite  │
-                    └─────────────┘
++-------------+     +-------------+     +-------------+
+|   Client    | --> |   Badger    | --> |  HTTP Job   |
+| Application |     |   Worker    |     |   Target    |
++-------------+     +------+------+     +-------------+
+                           |
+                           v
+                    +-------------+
+                    |  PostgreSQL |
+                    |   / SQLite  |
+                    +-------------+
 ```
 
 ### Job Lifecycle
 
 ```
-┌─────────┐     ┌─────────┐     ┌─────────┐
-│ Pending │ ──→ │ Running │ ──→ │ Success │
-└────┬────┘     └────┬────┘     └─────────┘
-     │               │
-     │  (retry)      │  (error)
-     │               ↓
-     └───────────────┴─────────→ Failure
++---------+     +---------+     +---------+
+| Pending | --> | Running | --> | Success |
++----+----+     +----+----+     +---------+
+     |               |
+     |  (retry)      |  (error)
+     |               v
+     +---------------+-------> Failure
 ```
 
 ---
@@ -217,14 +230,12 @@ Badger includes comprehensive test coverage:
 cargo test
 
 # Run PostgreSQL benchmarks
-DATABASE_URL="postgresql://user:pass@localhost:5432/badger_db" cargo test --test pg_benchmark -- --nocapture
+DATABASE_URL="postgresql://user:pass@localhost:5432/db" cargo test --test pg_benchmark -- --nocapture
 ```
 
 **Test Results:** 35 tests, 100% pass rate
 
 See [TESTING_REPORT.md](TESTING_REPORT.md) for detailed results.
-
-> *Note: Qwen Code was used for testing purposes only.*
 
 ---
 
@@ -311,7 +322,7 @@ Distributed under the MIT License. See [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Badger v1.0.0** | [GitHub](https://github.com/apexrx/badger) | [Testing Report](TESTING_REPORT.md)
+**Badger v1.0.0** | [GitHub](https://github.com/apexrx/badger) | [Benchmark Report](testing/BENCHMARK_REPORT.md)
 
 *Built with Rust | Powered by Tokio | Backed by PostgreSQL*
 
