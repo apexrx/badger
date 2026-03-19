@@ -1,19 +1,3 @@
-
-    ,---,.
-  ,'  .'  \                 ,---,
-,---.' .' |               ,---.'|                       __  ,-.
-|   |  |: |               |   | :  ,----._,.          ,' ,'/ /|
-:   :  :  /  ,--.--.      |   | | /   /  ' /   ,---.  '  | |' |
-:   |    ;  /       \   ,--.__| ||   :     |  /     \ |  |   ,'
-|   :     \.--.  .-. | /   ,'   ||   | .\  . /    /  |'  :  /
-|   |   . | \__\/: . ..   '  /  |.   ; ';  |.    ' / ||  | '
-'   :  '; | ," .--.; |'   ; |:  |'   .   . |'   ;   /|;  : |
-|   |  | ; /  /  ,.  ||   | '/  ' `---`-'| |   |  / ||  , ;
-|   :   / ;  :   .'   \   :    :| .'__/\_: ||   :    | ---'
-|   | ,'  |  ,     .-./\   \  /   |   :    : \   \  /
-`----'     `--`---'     `----'     \   \  /   `----'
-                                    `--`-'
-
 <div align="center">
 
 # Badger
@@ -102,23 +86,6 @@ Badger          █████████████████████�
 | Throughput | ~73 jobs/sec | ~41 jobs/sec | **Badger** |
 
 > **Note:** Full processing throughput comparison requires further instrumentation. Oban measures dispatch rate while Badger measures full claim to execute to complete cycle. See [Benchmark Report](testing/BENCHMARK_REPORT.md) for details.
-
-### When to Choose Badger
-
-- Single-job insertion patterns
-- Low-latency requirements
-- Memory-constrained environments
-- Zero-GC requirements
-- Rust ecosystem integration
-
-### When to Choose Oban
-
-- Concurrent bulk insertion patterns
-- Elixir/Phoenix ecosystem
-- Complex job workflows
-- Mature plugin ecosystem
-
-See the full [Benchmark Report](testing/BENCHMARK_REPORT.md) for detailed methodology and complete results.
 
 ---
 
@@ -232,10 +199,6 @@ cargo test
 # Run PostgreSQL benchmarks
 DATABASE_URL="postgresql://user:pass@localhost:5432/db" cargo test --test pg_benchmark -- --nocapture
 ```
-
-**Test Results:** 35 tests, 100% pass rate
-
-See [TESTING_REPORT.md](TESTING_REPORT.md) for detailed results.
 
 ---
 
